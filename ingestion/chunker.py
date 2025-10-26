@@ -38,12 +38,13 @@ class TableRecord:
     cells: list[list[str]]
 
 
-def normalize_tables(doc: DoclingDocument, doc_version_id: str) -> list[TableRecord]:
+def normalize_tables(doc: DoclingDocument, doc_version_id: str, chunk_id_for_table: str | None = None) -> list[TableRecord]:
     """Extract tables from Docling 2.x document."""
     tables: list[TableRecord] = []
     for idx, table in enumerate(doc.tables):
         table_id = f"{doc_version_id}:table:{idx}"
-        chunk_id = f"tbl_{table_id}"
+        # Use the provided chunk_id if available, otherwise use table_id
+        chunk_ref = chunk_id_for_table if chunk_id_for_table else f"{doc_version_id}:0"
 
         # Get page number from provenance
         page = 1
@@ -68,7 +69,7 @@ def normalize_tables(doc: DoclingDocument, doc_version_id: str) -> list[TableRec
         tables.append(
             TableRecord(
                 table_id=table_id,
-                chunk_id=chunk_id,
+                chunk_id=chunk_ref,
                 page=page,
                 path="",  # Could extract from hierarchy if needed
                 nrows=nrows,
@@ -166,5 +167,10 @@ def chunk_document(doc: DoclingDocument, doc_version_id: str) -> tuple[list[Chun
             )
         )
 
-    tables = normalize_tables(docling_doc, doc_version_id)
+    # Only extract tables if we have chunks to reference
+    tables = []
+    if chunks:
+        first_chunk_id = chunks[0].chunk_id
+        tables = normalize_tables(docling_doc, doc_version_id, first_chunk_id)
+
     return chunks, tables
