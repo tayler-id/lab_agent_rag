@@ -99,3 +99,46 @@ Add Row-Level Security policies keyed by `tenant_id` on every table, and unique 
 - **All Supabase** (auth, storage, Postgres, pgvector) keeps the stack simple and self-hostable.
 
 Build it step-by-step, ship retrieval + citations first, and layer on generation only when you have the hardware ready. This blueprint keeps your data tidy, your answers explainable, and your future changes safe.
+
+## Repository quick start
+
+This repo now ships a runnable slice of the architecture described above:
+
+- `pyproject.toml` – application dependencies (FastAPI, Docling, sentence-transformers, Supabase client)
+- `sql/schema.sql` – Postgres DDL (tables, indexes, RLS policies, hybrid-search RPC)
+- `app/` – FastAPI service exposing `/health`, `/upload`, `/ask`, and `/docs/:version_id`
+- `ingestion/` – parsing + chunking pipeline backed by Docling and sentence-transformers
+- `workers/index_worker.py` – polling worker that processes queued ingestion jobs
+
+### Install dependencies
+
+```bash
+uv sync  # or: pip install -e .[dev]
+```
+
+### Apply the database schema
+
+```bash
+psql "$SUPABASE_DB_URL" -f sql/schema.sql
+```
+
+### Run the API server
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+Set the following environment variables before running the service:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_STORAGE_BUCKET` (defaults to `docs`)
+
+### Kick off the ingestion worker
+
+```bash
+python -m workers.index_worker
+```
+
+Upload a file via `/upload` (or push a job into the `jobs` table) and query it with `/ask`. The worker uses Supabase Storage to download new files, parses them with Docling, writes normalized chunks and tables, generates embeddings, and stores everything in Postgres.
