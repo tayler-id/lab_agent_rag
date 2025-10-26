@@ -191,6 +191,48 @@
             border-radius: 8px;
             margin-bottom: 12px;
             border: 1px solid #e0e0e0;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .citation:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .citation-tooltip {
+            position: absolute;
+            background: #2d3748;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            max-width: 400px;
+            z-index: 1000;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .citation:hover .citation-tooltip {
+            opacity: 1;
+        }
+
+        .citation-tooltip::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: 20px;
+            width: 12px;
+            height: 12px;
+            background: #2d3748;
+            transform: rotate(45deg);
         }
 
         .citation-header {
@@ -446,15 +488,17 @@
             }
 
             if (data.chunks && data.chunks.length > 0) {
-                html += '<div class="citations"><h3>📎 Sources</h3>';
+                html += '<div class="citations"><h3>📎 Sources (hover to see full text)</h3>';
                 data.chunks.forEach((chunk, index) => {
+                    const preview = chunk.text.length > 150 ? chunk.text.substring(0, 150) + '...' : chunk.text;
                     html += `
                         <div class="citation">
+                            <div class="citation-tooltip">${escapeHtml(chunk.text)}</div>
                             <div class="citation-header">
                                 <span class="citation-title">${escapeHtml(chunk.document_title || 'Document')}</span>
                                 <span class="citation-page">Page ${chunk.page_start || '?'}</span>
                             </div>
-                            <div class="citation-text">${escapeHtml(chunk.text)}</div>
+                            <div class="citation-text">${escapeHtml(preview)}</div>
                             ${chunk.section_path ? `<div class="citation-section">📍 ${escapeHtml(chunk.section_path)}</div>` : ''}
                         </div>
                     `;
