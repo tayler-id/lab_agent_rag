@@ -6,7 +6,8 @@ from hashlib import sha256
 from io import BytesIO
 from typing import Any
 
-from docling.document_converter import DocumentConverter, InputDocument
+from docling.document_converter import DocumentConverter
+from docling_core.types.io import DocumentStream
 from sentence_transformers import SentenceTransformer
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -22,9 +23,9 @@ def _fingerprint(content: bytes) -> str:
 @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3))
 def _ensure_storage_upload(bucket: str, path: str, data: bytes) -> None:
     client = get_client()
-    storage = client.storage()
+    storage = client.storage
     bucket_client = storage.from_(bucket)
-    bucket_client.upload(path, data, {"content-type": "application/octet-stream", "upsert": True})
+    bucket_client.upload(path, data, {"content-type": "application/octet-stream", "upsert": "true"})
 
 
 def ingest_document(*, tenant_id: str, file_name: str, file_bytes: bytes, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -60,7 +61,7 @@ def ingest_document(*, tenant_id: str, file_name: str, file_bytes: bytes, metada
 
     doc_version_response = (
         client.table("document_versions")
-        .insert(
+        .upsert(
             {
                 "document_id": document_id,
                 "source_uri": storage_path,
@@ -70,14 +71,16 @@ def ingest_document(*, tenant_id: str, file_name: str, file_bytes: bytes, metada
                 "parse_quality_score": None,
                 "page_count": None,
                 "created_at": now.isoformat(),
-            }
+            },
+            on_conflict="document_id,source_sha256"
         )
         .execute()
     )
     version_id = doc_version_response.data[0]["id"]
 
     converter = DocumentConverter()
-    converted = converter.convert(InputDocument.from_bytes(file_name, BytesIO(file_bytes))).document
+    doc_stream = DocumentStream(name=file_name, stream=BytesIO(file_bytes))
+    converted = converter.convert(doc_stream).document
 
     chunks, tables = chunk_document(converted, version_id)
 

@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Iterator, Sequence
 
-from docling.datamodel.document import ConversionResult as ConvertedDocument
-from docling_core.types.doc.document import DoclingDocument, TableItem as Table, SectionHeaderItem as Section
+from docling_core.types.doc.document import DoclingDocument
 
 from app.config import get_settings
 
@@ -40,83 +38,86 @@ class TableRecord:
     cells: list[list[str]]
 
 
-def walk_sections(section: Section, parents: Sequence[str] | None = None) -> Iterator[tuple[str, Section]]:
-    """Yield sections with their hierarchical path."""
-
-    parents = parents or []
-    current_path = " > ".join([*parents, section.title.strip()]) if section.title else " > ".join(parents)
-    yield current_path, section
-    for child in section.children:
-        yield from walk_sections(child, [*parents, section.title.strip() or "Section"])
-
-
-def normalize_tables(doc: ConvertedDocument, doc_version_id: str) -> list[TableRecord]:
+def normalize_tables(doc: DoclingDocument, doc_version_id: str) -> list[TableRecord]:
+    """Extract tables from Docling 2.x document."""
     tables: list[TableRecord] = []
-    for table in doc.tables:
-        chunk_id = f"tbl_{table.id}"
-        path = table.metadata.get("section_path", "") if table.metadata else ""
-        cells = [[cell.plain_text for cell in row.cells] for row in table.rows]
+    for idx, table in enumerate(doc.tables):
+        table_id = f"{doc_version_id}:table:{idx}"
+        chunk_id = f"tbl_{table_id}"
+
+        # Get page number from provenance
+        page = 1
+        if table.prov and len(table.prov) > 0:
+            page = table.prov[0].page_no
+
+        # Extract cells - table.data is a grid of TableCell objects
+        cells: list[list[str]] = []
+        if hasattr(table, 'data') and table.data:
+            for row in table.data:
+                row_texts = []
+                for cell in row:
+                    if hasattr(cell, 'text'):
+                        row_texts.append(cell.text or "")
+                    else:
+                        row_texts.append(str(cell) if cell else "")
+                cells.append(row_texts)
+
+        nrows = len(cells)
+        ncols = len(cells[0]) if cells else 0
+
         tables.append(
             TableRecord(
-                table_id=table.id,
+                table_id=table_id,
                 chunk_id=chunk_id,
-                page=table.metadata.get("page", 0) if table.metadata else 0,
-                path=path,
-                nrows=len(table.rows),
-                ncols=len(table.rows[0].cells) if table.rows else 0,
+                page=page,
+                path="",  # Could extract from hierarchy if needed
+                nrows=nrows,
+                ncols=ncols,
                 cells=cells,
             )
         )
     return tables
 
 
-def chunk_document(doc: ConvertedDocument, doc_version_id: str) -> tuple[list[Chunk], list[TableRecord]]:
-    """Convert a Docling :class:`ConvertedDocument` into normalized chunks."""
+def chunk_document(doc: DoclingDocument, doc_version_id: str) -> tuple[list[Chunk], list[TableRecord]]:
+    """Convert a Docling 2.x :class:`DoclingDocument` into normalized chunks."""
 
     settings = get_settings()
     max_tokens = settings.max_chunk_tokens
     overlap = settings.chunk_overlap_tokens
 
     chunks: list[Chunk] = []
-    for section_path, section in walk_sections(doc.root_section):
-        if not section.content:
+    docling_doc = doc
+
+    # Process all text items from the document
+    buffer: list[str] = []
+    token_count = 0
+    page_start = 1
+    page_end = 1
+    section_path = "Document"
+
+    for text_item in docling_doc.texts:
+        text = text_item.text.strip() if hasattr(text_item, 'text') and text_item.text else ""
+        if not text:
             continue
 
-        buffer: list[str] = []
-        token_count = 0
-        page_start = section.metadata.get("page", 1) if section.metadata else 1
-        page_end = page_start
+        # Get page number from provenance
+        if hasattr(text_item, 'prov') and text_item.prov and len(text_item.prov) > 0:
+            current_page = text_item.prov[0].page_no
+            if not page_start or current_page < page_start:
+                page_start = current_page
+            if current_page > page_end:
+                page_end = current_page
 
-        for paragraph in section.content:
-            text = paragraph.plain_text.strip()
-            if not text:
-                continue
-            tokens = text.split()
-            if token_count + len(tokens) > max_tokens and buffer:
-                chunk_text = "\n".join(buffer)
-                chunk_hash = sha256(chunk_text.encode("utf-8")).hexdigest()
-                chunks.append(
-                    Chunk(
-                        chunk_id=f"{doc_version_id}:{len(chunks)}",
-                        doc_version_id=doc_version_id,
-                        section_path=section_path,
-                        page_start=page_start,
-                        page_end=page_end,
-                        kind="paragraph",
-                        text=chunk_text,
-                        token_count=token_count,
-                        meta={"source": "docling"},
-                        hash=chunk_hash,
-                    )
-                )
-                buffer = buffer[int(overlap / 2):] if overlap and buffer else []
-                token_count = sum(len(p.split()) for p in buffer)
+        # Update section path if this is a header
+        if hasattr(text_item, 'label') and 'header' in str(text_item.label).lower():
+            section_path = text[:100]  # Use first 100 chars as section name
 
-            buffer.append(text)
-            token_count += len(tokens)
-            page_end = max(page_end, paragraph.metadata.get("page", page_end) if paragraph.metadata else page_end)
+        tokens = text.split()
 
-        if buffer:
+        # Check if adding this text would exceed max tokens
+        if token_count + len(tokens) > max_tokens and buffer:
+            # Create chunk from buffer
             chunk_text = "\n".join(buffer)
             chunk_hash = sha256(chunk_text.encode("utf-8")).hexdigest()
             chunks.append(
@@ -134,5 +135,36 @@ def chunk_document(doc: ConvertedDocument, doc_version_id: str) -> tuple[list[Ch
                 )
             )
 
-    tables = normalize_tables(doc, doc_version_id)
+            # Keep overlap
+            if overlap and buffer:
+                overlap_size = min(len(buffer), int(overlap / 10))  # Keep last few items
+                buffer = buffer[-overlap_size:] if overlap_size > 0 else []
+                token_count = sum(len(p.split()) for p in buffer)
+            else:
+                buffer = []
+                token_count = 0
+
+        buffer.append(text)
+        token_count += len(tokens)
+
+    # Add remaining buffer as final chunk
+    if buffer:
+        chunk_text = "\n".join(buffer)
+        chunk_hash = sha256(chunk_text.encode("utf-8")).hexdigest()
+        chunks.append(
+            Chunk(
+                chunk_id=f"{doc_version_id}:{len(chunks)}",
+                doc_version_id=doc_version_id,
+                section_path=section_path,
+                page_start=page_start,
+                page_end=page_end,
+                kind="paragraph",
+                text=chunk_text,
+                token_count=token_count,
+                meta={"source": "docling"},
+                hash=chunk_hash,
+            )
+        )
+
+    tables = normalize_tables(docling_doc, doc_version_id)
     return chunks, tables
