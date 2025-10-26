@@ -83,17 +83,13 @@ create table if not exists jobs (
     updated_at timestamptz not null default now()
 );
 
-create materialized view if not exists chunk_ft (
-    with source as (
-        select
-            c.id,
-            c.doc_version_id,
-            c.text,
-            to_tsvector('english', coalesce(c.text, '')) as tsv
-        from chunks c
-    )
-    select * from source
-);
+create materialized view if not exists chunk_ft as
+    select
+        c.id,
+        c.doc_version_id,
+        c.text,
+        to_tsvector('english', coalesce(c.text, '')) as tsv
+    from chunks c;
 
 create index if not exists idx_chunk_ft_tsv on chunk_ft using gin(tsv);
 

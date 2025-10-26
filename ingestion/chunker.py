@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Iterator, Sequence
 
-from docling.datamodel.base_models import ConvertedDocument, Section
-from docling.datamodel.document import Table
+from docling.datamodel.document import ConversionResult as ConvertedDocument
+from docling_core.types.doc.document import DoclingDocument, TableItem as Table, SectionHeaderItem as Section
 
 from app.config import get_settings
 

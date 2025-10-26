@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import retrieval
 from app.config import get_settings
@@ -12,6 +14,24 @@ from app.schemas import AskRequest, AskResponse, HealthResponse, UploadResponse
 from ingestion.ingest_service import ingest_document
 
 app = FastAPI(title="Lab Agent RAG", version="0.1.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/static/index.html")
 
 
 @app.get("/health", response_model=HealthResponse)
